@@ -165,9 +165,11 @@ def beams(u, W, H, P):
             f += (rad ** 2) / ((X - cx) ** 2 + (Y - cy) ** 2 + 1e-4)
         t = np.clip((f - 0.55) / 0.9, 0, 1)
         body = t * t * (3 - 2 * t)                           # тело кляксы с мягким краем
-        halo = 0.28 * np.clip(f, 0, 1.2) ** 1.6              # слабое свечение вокруг
-        hot = np.clip((f - 1.4) / 2.2, 0, 1) ** 1.2          # светлое ядро внутри
-        out += (body[..., None] * 0.95 + halo[..., None]) * mid + hot[..., None] * 1.5 * core
+        # свечение вокруг: убывает медленно (~1/d), поэтому уходит далеко от кляксы
+        halo = 0.60 * np.clip(f, 0, 1.5) ** 0.55 * np.exp(-np.clip(f, 0, 1) * 0.6)
+        glow_far = 0.30 * np.clip(f, 0, 3) ** 0.35 / (1 + 0.35 * f)
+        hot = np.clip((f - 2.0) / 3.5, 0, 1) ** 1.3          # ядро: еле заметное
+        out += ((body * 0.40 + halo + glow_far)[..., None] * mid + hot[..., None] * 0.30 * core)
     return cv2.resize(out, (W, H), interpolation=cv2.INTER_CUBIC)
 
 
