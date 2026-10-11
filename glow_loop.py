@@ -145,7 +145,7 @@ def beams(u, W, H, P):
     out = np.zeros((gh, gw, 3), np.float32)
     mid = np.array(P["beam_mid"]); core = np.array(P["beam_core"])
     rng = np.random.default_rng(CFG["seed"] + 101)
-    for sx, sy in ((0.04 * W / H, 0.02), (0.96 * W / H, 0.98)):
+    for sx, sy in ((-0.03 * W / H, -0.07), (0.96 * W / H, 0.98)):
         # центр сгустка медленно блуждает
         cx = sx + 0.05 * np.sin(rng.uniform(0, TAU) + TAU * u * int(rng.choice([-1, 1])))
         cy = sy + 0.05 * np.sin(rng.uniform(0, TAU) + TAU * u * int(rng.choice([-1, 1])))
