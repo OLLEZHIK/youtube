@@ -138,29 +138,36 @@ def background(u, W, H):
 
 
 def beams(u, W, H, P):
-    """Два «живых» сгустка света по углам (без явных лучей): контур плавно меняет форму.
-    Деформация — гармоники угла с целыми скоростями => идеальный цикл, движение очень медленное."""
+    """Два света в форме кляксы: каждая — слияние нескольких «капель» (метаболы),
+    которые очень медленно ползут, пульсируют по размеру, сливаются и расходятся.
+    Все параметры — целые циклы за период => идеальная петля."""
     gw, gh = 480, 270
     X, Y = np.meshgrid(np.linspace(0, W / H, gw), np.linspace(0, 1, gh))
     out = np.zeros((gh, gw, 3), np.float32)
     mid = np.array(P["beam_mid"]); core = np.array(P["beam_core"])
-    rng = np.random.default_rng(CFG["seed"] + 101)
-    for sx, sy in ((-0.03 * W / H, -0.07), (0.96 * W / H, 0.98)):
-        # центр сгустка медленно блуждает
-        cx = sx + 0.05 * np.sin(rng.uniform(0, TAU) + TAU * u * int(rng.choice([-1, 1])))
-        cy = sy + 0.05 * np.sin(rng.uniform(0, TAU) + TAU * u * int(rng.choice([-1, 1])))
-        dx, dy = X - cx, Y - cy
-        r_ = np.hypot(dx, dy) + 1e-4
-        th = np.arctan2(dy, dx)
-        deform = np.ones_like(r_)
-        for k, amp in ((1, 0.22), (2, 0.18), (3, 0.10), (4, 0.05)):
-            deform += amp * np.cos(k * th + rng.uniform(0, TAU) + TAU * int(rng.choice([-1, 1])) * u)
-        deform = np.clip(deform, 0.55, None)
-        rr = r_ / (0.30 * deform)
-        breath = 0.85 + 0.15 * np.cos(rng.uniform(0, TAU) + TAU * int(rng.choice([1, 2])) * u)
-        body = np.exp(-rr ** 1.3 * 1.8) * 0.9 + 0.35 / (1 + (rr * 1.4) ** 2)
-        hot = 1.6 * np.exp(-((r_ / (0.10 * deform)) ** 1.4))
-        out += ((body)[..., None] * mid + hot[..., None] * core) * breath
+    rng = np.random.default_rng(CFG["seed"] + 202)
+    for sx, sy, inward in ((-0.03 * W / H, -0.07, 1), (0.96 * W / H, 0.98, -1)):
+        f = np.zeros_like(X)
+        for j in range(6):                       # 6 капель на клякса
+            ang = rng.uniform(0, TAU) + (0.0 if j == 0 else 0.0)
+            # капли растут «внутрь» кадра: угол вокруг направления к центру
+            base = np.arctan2(0.5 - sy, 0.5 * W / H - sx) + rng.uniform(-1.1, 1.1)
+            dist0 = 0.0 if j == 0 else rng.uniform(0.10, 0.30)
+            dist_a = 0.0 if j == 0 else rng.uniform(0.04, 0.10)
+            ph = rng.uniform(0, TAU); n = int(rng.choice([-1, 1]))
+            ph2 = rng.uniform(0, TAU); n2 = int(rng.choice([1, 2]))
+            rad0 = rng.uniform(0.20, 0.26) if j == 0 else rng.uniform(0.07, 0.15)
+            rad = rad0 * (1 + 0.22 * np.sin(ph2 + TAU * n2 * u))
+            d_ = dist0 + dist_a * np.sin(ph + TAU * n * u)
+            th = base + 0.35 * np.sin(ph + TAU * n * u)       # капля медленно качается по дуге
+            cx = sx + d_ * np.cos(th)
+            cy = sy + d_ * np.sin(th)
+            f += (rad ** 2) / ((X - cx) ** 2 + (Y - cy) ** 2 + 1e-4)
+        t = np.clip((f - 0.55) / 0.9, 0, 1)
+        body = t * t * (3 - 2 * t)                           # тело кляксы с мягким краем
+        halo = 0.28 * np.clip(f, 0, 1.2) ** 1.6              # слабое свечение вокруг
+        hot = np.clip((f - 1.4) / 2.2, 0, 1) ** 1.2          # светлое ядро внутри
+        out += (body[..., None] * 0.95 + halo[..., None]) * mid + hot[..., None] * 1.5 * core
     return cv2.resize(out, (W, H), interpolation=cv2.INTER_CUBIC)
 
 
