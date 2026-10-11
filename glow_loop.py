@@ -25,12 +25,14 @@ PALETTES = {
     "blue": dict(
         base=(0.004, 0.012, 0.035), tint=(0.05, 0.22, 0.46), blob=1.0, line=1.0, glow=1.0,
         glows=((0.55, 0.78, 1.0), (0.30, 0.60, 1.0), (0.14, 0.42, 0.95), (0.08, 0.30, 0.85)),
-        core=(0.9, 0.97, 1.0), curve_cols=((1, 1, 1),), flare_thr=1.2),
+        core=(0.9, 0.97, 1.0), curve_cols=((1, 1, 1),), flare_thr=1.2,
+        beam_core=(0.80, 0.93, 1.0), beam_mid=(0.10, 0.40, 1.0)),
     # тёмное золото на почти чёрном, вторая линия — приглушённая серо-голубая
     "gold": dict(
         base=(0.006, 0.005, 0.008), tint=(0.30, 0.19, 0.02), blob=0.55, line=0.8, glow=0.8,
         glows=((1.0, 0.72, 0.20), (0.95, 0.60, 0.10), (0.85, 0.48, 0.06), (0.60, 0.33, 0.03)),
-        core=(1.0, 0.86, 0.48), curve_cols=((1, 1, 1), (0.55, 0.62, 0.78)), flare_thr=0.7),
+        core=(1.0, 0.86, 0.48), curve_cols=((1, 1, 1), (0.55, 0.62, 0.78)), flare_thr=0.7,
+        beam_core=(1.0, 0.88, 0.45), beam_mid=(1.0, 0.50, 0.04)),
 }
 
 # ----------------------------------------------------------------- сцена
@@ -135,6 +137,33 @@ def background(u, W, H):
     return cv2.resize(base.astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)  # RGB
 
 
+def beams(u, W, H, P):
+    """Два «живых» сгустка света по углам (без явных лучей): контур плавно меняет форму.
+    Деформация — гармоники угла с целыми скоростями => идеальный цикл, движение очень медленное."""
+    gw, gh = 480, 270
+    X, Y = np.meshgrid(np.linspace(0, W / H, gw), np.linspace(0, 1, gh))
+    out = np.zeros((gh, gw, 3), np.float32)
+    mid = np.array(P["beam_mid"]); core = np.array(P["beam_core"])
+    rng = np.random.default_rng(CFG["seed"] + 101)
+    for sx, sy in ((0.04 * W / H, 0.02), (0.96 * W / H, 0.98)):
+        # центр сгустка медленно блуждает
+        cx = sx + 0.05 * np.sin(rng.uniform(0, TAU) + TAU * u * int(rng.choice([-1, 1])))
+        cy = sy + 0.05 * np.sin(rng.uniform(0, TAU) + TAU * u * int(rng.choice([-1, 1])))
+        dx, dy = X - cx, Y - cy
+        r_ = np.hypot(dx, dy) + 1e-4
+        th = np.arctan2(dy, dx)
+        deform = np.ones_like(r_)
+        for k, amp in ((1, 0.22), (2, 0.18), (3, 0.10), (4, 0.05)):
+            deform += amp * np.cos(k * th + rng.uniform(0, TAU) + TAU * int(rng.choice([-1, 1])) * u)
+        deform = np.clip(deform, 0.55, None)
+        rr = r_ / (0.30 * deform)
+        breath = 0.85 + 0.15 * np.cos(rng.uniform(0, TAU) + TAU * int(rng.choice([1, 2])) * u)
+        body = np.exp(-rr ** 1.3 * 1.8) * 0.9 + 0.35 / (1 + (rr * 1.4) ** 2)
+        hot = 1.6 * np.exp(-((r_ / (0.10 * deform)) ** 1.4))
+        out += ((body)[..., None] * mid + hot[..., None] * core) * breath
+    return cv2.resize(out, (W, H), interpolation=cv2.INTER_CUBIC)
+
+
 def render(i):
     W, H, N = CFG["W"], CFG["H"], CFG["N"]
     P = CFG["pal"]
@@ -197,6 +226,8 @@ def render(i):
     # core слегка уходит в белый
     corec = img * np.array(P["core"])
     out = bg + glow + corec + flare
+    if CFG["style"] == "beams":
+        out = out + beams(u, W, H, P)
     out = 1.0 - np.exp(-out * 1.15)            # мягкий tone-mapping без клиппинга
     out = out ** (1 / 1.05)
     # зерно + дизеринг (убирает бандинг на тёмных градиентах, на цикл не влияет)
@@ -214,6 +245,8 @@ def main():
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--curves", type=int, default=2)
+    ap.add_argument("--style", choices=["lines", "beams"], default="lines",
+                    help="beams = два пучка света по углам + еле заметные медленные линии")
     ap.add_argument("--palette", choices=sorted(PALETTES), default="blue")
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--frames", type=int, default=0, help="отрендерить только N кадров (тест)")
@@ -223,7 +256,10 @@ def main():
     W = a.width - a.width % 2
     H = (W * 9 // 16) // 2 * 2
     N = int(round(a.duration * a.fps))
-    cfg = {"W": W, "H": H, "N": N, "pal": PALETTES[a.palette]}
+    pal = dict(PALETTES[a.palette])
+    if a.style == "beams":  # линии почти невидимы, фон тёмный: пучки — главные
+        pal["line"] *= 0.14; pal["glow"] *= 0.5; pal["blob"] *= 0.2
+    cfg = {"W": W, "H": H, "N": N, "pal": pal, "style": a.style, "seed": a.seed}
     scene = make_scene(a.seed, a.curves)
     total = a.frames or N
     ff = subprocess.Popen(
